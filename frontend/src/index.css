@@ -1,0 +1,131 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* ── Typography ── */
+  --font-sans:    "Courier Prime", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "Share Tech Mono", monospace;
+  --font-display: "Orbitron", monospace;
+
+  /* ── Military / AGRO palette (App.tsx) ── */
+  --color-military-bg:           #ecedee;
+  --color-military-alt:          #f4f5f6;
+  --color-military-deep:         #0f172a;
+  --color-military-accent:       #334155;
+  --color-military-green:        #16a34a;
+  --color-military-green-light:  #dcfce7;
+  --color-border-military:       #cbd5e1;
+  --color-text-primary:          #0f172a;
+  --color-text-secondary:        #475569;
+
+  /* ── PURSUIT / agency palette (CreateGridModal, TransactionHistory, etc.) ── */
+  --color-cream:          #F2EDE0;
+  --color-cream-dark:     #E5DEC8;
+  --color-cream-mid:      #EDE7D5;
+  --color-ink:            #18150F;
+  --color-ink-soft:       #3D3829;
+  --color-ink-muted:      #7A7265;
+  --color-ink-faint:      #B5AC98;
+
+  --color-cyan-agency:    #0891B2;
+  --color-violet-agency:  #6D28D9;
+  --color-amber-agency:   #B45309;
+  --color-mint-agency:    #047857;
+  --color-red-agency:     #B91C1C;
+  --color-border-agency:  #C8C0AA;
+}
+
+/* ── Base ── */
+:root {
+  background-color: #ecedee;
+  color: #0f172a;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased bg-military-bg text-text-primary;
+    background-image:
+      linear-gradient(#D1D5DB 1px, transparent 1px),
+      linear-gradient(90deg, #D1D5DB 1px, transparent 1px);
+    background-size: 50px 50px;
+    /* PWA safe-area padding for notched devices */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  /* Smooth scrolling everywhere */
+  html { scroll-behavior: smooth; }
+
+  /* Remove iOS tap highlight on interactive elements */
+  button, a { -webkit-tap-highlight-color: transparent; }
+}
+
+/* ── Shared component utilities ── */
+.glass-morphism {
+  @apply bg-white/80 border border-border-military rounded-none shadow-sm;
+}
+
+.stat-label {
+  @apply font-mono text-[9px] uppercase tracking-[0.35em] text-text-secondary font-bold;
+}
+
+.agency-badge {
+  @apply border border-current px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] rounded-none;
+}
+
+/* ── Scrollbar ── */
+.custom-scrollbar::-webkit-scrollbar        { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track  { @apply bg-military-bg; }
+.custom-scrollbar::-webkit-scrollbar-thumb  { @apply bg-border-military; }
+
+/* ── Animations ── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes spin-slow-reverse {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+
+@keyframes alert-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.65; }
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.animate-agency-pulse   { animation: blink 1.4s step-end infinite; }
+.animate-alert-pulse    { animation: alert-pulse 1s ease-in-out infinite; }
+.animate-ticker-scroll  { animation: ticker-scroll 40s linear infinite; }
+
+/* ── PWA install banner ── */
+.pwa-install-banner {
+  @apply fixed bottom-0 left-0 right-0 z-50 bg-military-deep text-white;
+  @apply flex items-center justify-between gap-4 px-6 py-4;
+  @apply font-mono text-xs uppercase tracking-widest;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+/* ── Mobile touch targets (WCAG 2.5.5) ── */
+@media (max-width: 768px) {
+  button, a, input, select {
+    min-height: 44px;
+  }
+}

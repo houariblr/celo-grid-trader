@@ -1,0 +1,135 @@
+mod config;
+mod price_feed;
+mod grid;
+mod chain;
+
+use anyhow::Result;
+use tracing::{info, error, warn};
+use tracing_subscriber::EnvFilter;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("keeper=info".parse()?)
+        )
+        .init();
+
+    dotenv::dotenv().ok();
+
+    info!("🚀 Celo Grid Trading Keeper V2 starting...");
+
+    let config = config::Config::from_env()?;
+    info!("📋 Contract : {}", config.contract_address);
+    info!("👤 Keeper   : {}", config.keeper_address);
+    info!("⏱️  Interval : {}ms", config.poll_interval_ms);
+
+    // Price feed is now used ONLY for logging + pre-filtering.
+    // The contract sources the authoritative price from Chainlink oracle.
+    let price_feed = price_feed::PriceFeed::new(config.rpc_url.clone());
+
+    let chain_client = chain::ChainClient::new(
+        config.contract_address.clone(),
+        config.rpc_url.clone(),
+        config.private_key.clone(),
+    )?;
+
+    info!("✅ Components initialized — starting main loop");
+
+    loop {
+        // 1. Fetch indicative price for pre-filtering only (avoids sending txs
+        //    that will certainly fail, saving gas). Not used for execution logic.
+        let current_price = match price_feed.get_celo_price().await {
+            Ok(p) => {
+                info!("💰 CELO/USD (indicative): ${:.4}", p.price);
+                p.price
+            }
+            Err(e) => {
+                warn!("⚠️  Price feed error (non-critical): {}", e);
+                // Continue without pre-filtering — contract oracle will validate
+                0.0
+            }
+        };
+
+        // 2. Fetch active grids
+        let grids = match chain_client.get_active_grids().await {
+            Ok(g) => g,
+            Err(e) => {
+                error!("❌ Failed to fetch grids: {}", e);
+                tokio::time::sleep(
+                    tokio::time::Duration::from_millis(config.poll_interval_ms)
+                ).await;
+                continue;
+            }
+        };
+
+        if grids.is_empty() {
+            info!("📭 No active grids");
+        }
+
+        // 3. Check each grid
+        for on_chain_grid in grids {
+            info!("🔍 Checking Grid #{}", on_chain_grid.id);
+
+            let grid = grid::Grid {
+                id: on_chain_grid.id,
+                owner: on_chain_grid.owner.to_string(),
+                lower_price: grid::GridEngine::wei_to_f64(
+                    on_chain_grid.lower_price.to::<u128>()
+                ),
+                upper_price: grid::GridEngine::wei_to_f64(
+                    on_chain_grid.upper_price.to::<u128>()
+                ),
+                grid_count: on_chain_grid.grid_count.to::<u64>(),
+                active: on_chain_grid.active,
+                levels: on_chain_grid.levels.iter().map(|l| grid::GridLevel {
+                    index: l.index as u64,
+                    price: grid::GridEngine::wei_to_f64(l.price.to::<u128>()),
+                    filled: l.filled,
+                    is_buy: l.is_buy,
+                }).collect(),
+            };
+
+            // 4. Pre-filter using indicative price (skips if price feed failed)
+            //    The contract's Chainlink oracle is the authoritative price source.
+            let executable = if current_price > 0.0 {
+                let levels = grid::GridEngine::find_executable_levels(&grid, current_price);
+                if levels.is_empty() {
+                    info!("  ↳ No levels to execute at ${:.4} (indicative)", current_price);
+                }
+                levels
+            } else {
+                // Price feed unavailable — let the contract decide via oracle
+                warn!("  ↳ Price feed down, attempting all unfilled levels");
+                grid.levels.iter()
+                    .filter(|l| !l.filled)
+                    .map(|l| l.index)
+                    .collect()
+            };
+
+            // 5. Execute each candidate level
+            //    ✅ V2: no price passed — contract gets it from Chainlink
+            for level_index in executable {
+                info!(
+                    "  ⚡ Executing level {} on Grid #{}",
+                    level_index, on_chain_grid.id
+                );
+
+                match chain_client.execute_grid(
+                    on_chain_grid.id,
+                    level_index as usize,
+                    // ✅ removed current_price_wei — not needed in V2
+                ).await {
+                    Ok(tx_hash) => info!("  ✅ TX: {}", tx_hash),
+                    Err(e)      => error!("  ❌ Execute failed: {}", e),
+                }
+            }
+        }
+
+        // 6. Wait before next cycle
+        tokio::time::sleep(
+            tokio::time::Duration::from_millis(config.poll_interval_ms)
+        ).await;
+    }
+}

@@ -1,0 +1,180 @@
+mod config;
+mod grid;
+mod price_feed;
+mod chain;
+mod keeper_ws_server;
+mod atr; // أضف هذا السطر مع بقية الموديولات (config, grid, etc.)
+pub mod backtest; // هذا السطر يسمح للملفات الأخرى برؤية backtest
+
+use std::sync::Arc;
+use std::time::Duration;
+use anyhow::Result;
+use tokio::sync::RwLock;
+use tracing::{error, info, warn};
+use tracing_subscriber::EnvFilter;
+use serde_json::json;
+// ... (الموديولات والـ Arc والـ Duration) ...
+
+use config::Config;
+use grid::{active_levels, compute_grid_auto, OrderSide}; // استيراد واحد يكفي
+use price_feed::{ohlc_updater_task, OhlcData, SharedOhlc, KlineParams, fetch_aggregated_price};
+use chain::ChainClient;
+use keeper_ws_server::{WsServer, create_update_payload};
+use crate::atr::atr_context; // استيراد الـ context الخاص بالتقلب
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_target(false)
+        .compact()
+        .init();
+
+    info!("🚀 Celo Grid Trading Keeper V2 — Fibonacci WS Edition");
+
+    let config = Config::from_env()?;
+    
+    // 1. إعداد خادم الـ WebSocket
+    let (ws_server, _ws_rx) = WsServer::new();
+    let ws_server = Arc::new(ws_server);
+
+    // 2. تشغيل خادم الـ WebSocket في خلفية البرنامج
+    {
+        let ws_clone = Arc::clone(&ws_server);
+        tokio::spawn(async move {
+            if let Err(e) = ws_clone.run("0.0.0.0:8080").await {
+                error!("❌ WebSocket Server Error: {}", e);
+            }
+        });
+    }
+
+    let http_client = Arc::new(
+        reqwest::Client::builder()
+            .user_agent("CeloGridKeeperV2/1.0")
+            .timeout(Duration::from_secs(15))
+            .build()?
+    );
+
+    let chain_client = Arc::new(ChainClient::new(
+        config.contract_address.clone(),
+        config.keeper_address.clone(),
+        config.rpc_url.clone(),
+        config.private_key.clone(),
+        config.ohlc_max_retries,
+    )?);
+
+    let initial_ohlc = OhlcData::placeholder(config.initial_high, config.initial_low);
+    let shared_ohlc: SharedOhlc = Arc::new(RwLock::new(initial_ohlc));
+
+    let kline_params = KlineParams {
+        symbol:   config.ohlc_symbol.clone(),
+        interval: config.ohlc_interval.clone(),
+        limit:    config.ohlc_candle_limit,
+    };
+
+    {
+        let shared_clone  = Arc::clone(&shared_ohlc);
+        let params_clone  = kline_params.clone();
+        let refresh_secs  = config.ohlc_refresh_secs;
+        let max_retries   = config.ohlc_max_retries;
+        let client_clone  = Arc::clone(&http_client);
+        
+        tokio::spawn(async move {
+            ohlc_updater_task(shared_clone, params_clone, refresh_secs, max_retries, client_clone).await;
+        });
+    }
+
+    info!("⏳ Waiting for data synchronization...");
+    wait_for_first_ohlc_update(&shared_ohlc, config.initial_high).await;
+    info!("✅ Keeper loop started!");
+
+    let mut tick = tokio::time::interval(Duration::from_millis(config.poll_interval_ms));
+
+    loop {
+        tick.tick().await;
+        if let Err(e) = run_keeper_cycle(&shared_ohlc, &config, &chain_client, &http_client, &ws_server).await {
+            error!("❌ Cycle error: {}", e);
+        }
+    }
+}
+
+async fn run_keeper_cycle(
+    shared_ohlc:  &SharedOhlc,
+    config:       &Config,
+    chain_client: &ChainClient,
+    http_client:  &reqwest::Client,
+    ws_server:    &Arc<WsServer>,
+) -> Result<()> {
+    let ohlc = shared_ohlc.read().await.clone();
+    let aggregated = fetch_aggregated_price(http_client, &config.ohlc_symbol).await?;
+    let current_price = aggregated.price;
+
+    // 3. بث السعر الحالي مباشرة للوحة التحكم
+    ws_server.broadcast(create_update_payload("PRICE_UPDATE", json!({
+        "price": current_price,
+        "isCBTriggered": false,
+        "sources": aggregated.sources_used.iter().map(|s| json!({"name": *s, "price": current_price})).collect::<Vec<_>>()
+    })));
+
+    // تصحيح: بدلاً من store.get_last_atr()، نستخدم البيانات الموجودة في متغير ohlc
+    let atr_ctx_opt = if let Some(last_atr) = ohlc.get_last_atr() {
+        Some(atr_context(last_atr, current_price))
+    } else {
+        None 
+    };
+
+    let grid_result = compute_grid_auto(&ohlc, current_price, atr_ctx_opt.as_ref());
+    let active_grids = chain_client.get_active_grids().await?;
+
+    for on_chain_grid in active_grids {
+        // تحديث حالة الـ Grid في الواجهة
+        ws_server.broadcast(create_update_payload("INITIAL_STATE", json!({
+            "grid": {
+                "id": on_chain_grid.id,
+                // في ملف src/main.rs
+            "lowerPrice": on_chain_grid.lower_price.to_string().parse::<f64>().unwrap_or(0.0) / 1e18,
+            "upperPrice": on_chain_grid.upper_price.to_string().parse::<f64>().unwrap_or(0.0) / 1e18,
+                "baseBalance": 0.0, // يمكنك تحديثها لاحقاً من العقد
+                "active": true
+            }
+        })));
+
+        for level in active_levels(&grid_result) {
+            for grid_level in &on_chain_grid.levels {
+                if grid_level.filled { continue; }
+
+                let is_buy_match = grid_level.is_buy == (level.side == OrderSide::Buy);
+                if !is_buy_match { continue; }
+
+                if (grid_level.is_buy && current_price <= level.price) || (!grid_level.is_buy && current_price >= level.price) {
+                    info!("⚡ Trading Triggered at ${:.4}", level.price);
+
+                    match chain_client.execute_grid(on_chain_grid.id, grid_level.index).await {
+                        Ok(tx_hash)  => {
+                            info!("✅ Trade Successful: {}", tx_hash);
+                            // 4. بث التغيير للوحة التحكم فور نجاح الصفقة
+                            ws_server.broadcast(create_update_payload("TRANSACTION", json!({
+                                "id": format!("{}-{}", on_chain_grid.id, grid_level.index),
+                                "hash": tx_hash,
+                                "type": if grid_level.is_buy { "BUY" } else { "SELL" },
+                                "price": current_price,
+                                "status": "SUCCESS"
+                            })));
+                        },
+                        Err(e)  => error!("❌ Execution failed: {}", e),
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn wait_for_first_ohlc_update(shared_ohlc: &SharedOhlc, initial_high: f64) {
+    let start = std::time::Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if (shared_ohlc.read().await.high - initial_high).abs() > f64::EPSILON { return; }
+        if start.elapsed().as_secs() > 60 { return; }
+    }
+}

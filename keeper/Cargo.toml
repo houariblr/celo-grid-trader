@@ -1,0 +1,64 @@
+[package]
+name    = "celo-grid-keeper-v2"
+version = "2.0.0"
+edition = "2021"
+authors = ["Celo Grid Keeper Team"]
+description = "Celo Grid Trading Keeper V2 with Fibonacci Circuit Breaker"
+
+[dependencies]
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+chrono = "0.4"
+tokio  = { version = "1", features = ["full"] }
+alloy = { version = "1.0", features = ["full"] }
+
+# ── HTTP لجلب بيانات Binance ──────────────────────────────────
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+
+# ── تسلسل/فك تسلسل JSON ────────────────────────────────────
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ── معالجة الأخطاء ────────────────────────────────────────────
+anyhow = "1"
+
+# ── إدارة متغيرات البيئة ──────────────────────────────────────
+dotenvy = "0.15"
+
+# ── السجلات (Logging) ─────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── اختبارات والألوان ─────────────────────────────────────────
+colored = "2.0"
+
+# ── عميل Ethereum/Celo (أضفه عند بناء chain.rs) ─────────────
+# alloy = { version = "0.1", features = ["full"] }
+
+[profile.release]
+opt-level = 3
+lto       = true
+codegen-units = 1
+strip     = true
+
+
+##[[bin]]
+##name = "test_keeper"
+##path = "src/bin/test_keeper.rs"
+
+[[bin]]
+name    = "backtest"
+path    = "src/bin/backtest.rs"
+
+[[bin]]
+name    = "keeper-v2"
+path    = "src/main_v2.rs"
+
+[[bin]]
+name    = "test-keeper-v2"
+path    = "src/bin/test_keeper_v2.rs"
+
+[[bin]]
+name    = "create-grid"
+path    = "src/bin/create_grid.rs"
+ 

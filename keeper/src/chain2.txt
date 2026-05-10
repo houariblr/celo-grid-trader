@@ -1,0 +1,197 @@
+// ============================================================
+//  chain.rs  –  Blockchain Client with Retry Logic
+//  Critical fix: getUserGrids uses KEEPER address, not contract address
+// ============================================================
+
+use alloy::{
+    network::EthereumWallet,
+    primitives::{Address, U256},
+    providers::ProviderBuilder,
+    signers::local::PrivateKeySigner,
+    sol,
+};
+use anyhow::{anyhow, Result};
+use std::time::Duration;
+use tracing::{info, warn};
+
+sol!(
+    #[allow(missing_docs)]
+    #[sol(rpc)]
+    GridTradingV2,
+    "../contract/out/GridTrading.sol/GridTradingV2.json"
+);
+
+#[derive(Debug, Clone)]
+pub struct GridLevelOnChain {
+    pub index: usize,
+    pub price: U256,
+    pub filled: bool,
+    pub is_buy: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct GridOnChain {
+    pub id: u64,
+    pub owner: Address,
+    pub base_token: Address,
+    pub quote_token: Address,
+    pub lower_price: U256,
+    pub upper_price: U256,
+    pub grid_count: U256,
+    pub active: bool,
+    pub levels: Vec<GridLevelOnChain>,
+}
+
+pub struct ChainClient {
+    pub contract_address: Address,
+    /// ✅ عنوان المستخدم/الـ keeper — يُستخدم لجلب grids الخاصة به
+    pub keeper_address: Address,
+    pub provider_url: String,
+    pub private_key: String,
+    pub max_retries: u32,
+}
+
+impl ChainClient {
+    pub fn new(
+        contract_address: String,
+        keeper_address: String,
+        provider_url: String,
+        private_key: String,
+        max_retries: u32,
+    ) -> Result<Self> {
+        Ok(Self {
+            contract_address: contract_address.parse()?,
+            // ✅ FIX: parse keeper address separately
+            keeper_address: keeper_address.parse()?,
+            provider_url,
+            private_key,
+            max_retries,
+        })
+    }
+
+    /// جلب الـ grids النشطة مع إعادة المحاولة عند الفشل
+    pub async fn get_active_grids(&self) -> Result<Vec<GridOnChain>> {
+        let mut last_err = anyhow!("لم تبدأ بعد");
+
+        for attempt in 1..=self.max_retries {
+            match self.try_get_active_grids().await {
+                Ok(grids) => return Ok(grids),
+                Err(e) => {
+                    warn!("⚠️ get_active_grids محاولة {}/{}: {}", attempt, self.max_retries, e);
+                    last_err = e;
+                    if attempt < self.max_retries {
+                        tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+        Err(last_err)
+    }
+
+    async fn try_get_active_grids(&self) -> Result<Vec<GridOnChain>> {
+        let provider = ProviderBuilder::new()
+            .connect_http(self.provider_url.parse()?);
+
+        let contract = GridTradingV2::new(self.contract_address, &provider);
+
+        // ✅ CRITICAL FIX: استخدام keeper_address (عنوان المستخدم)
+        // وليس contract_address — الخطأ الأصلي يجعل القائمة دائماً فارغة
+        let grid_ids = contract
+            .getUserGrids(self.keeper_address)
+            .call()
+            .await?;
+
+        info!("📋 عدد الـ grids لـ {}: {}", self.keeper_address, grid_ids.len());
+
+        let mut grids = Vec::new();
+
+        for id_u256 in grid_ids {
+            let id = id_u256.to::<u64>();
+
+            let grid_data = match contract.grids(id_u256).call().await {
+                Ok(g)  => g,
+                Err(e) => { warn!("تعذّر جلب بيانات grid {}: {}", id, e); continue; }
+            };
+
+            // تخطي الـ grids غير النشطة فوراً
+            if !grid_data.active {
+                continue;
+            }
+
+            let raw_levels = match contract.getGridLevels(id_u256).call().await {
+                Ok(l)  => l,
+                Err(e) => { warn!("تعذّر جلب مستويات grid {}: {}", id, e); continue; }
+            };
+
+            let levels: Vec<GridLevelOnChain> = raw_levels
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| GridLevelOnChain {
+                    index: i,
+                    price: l.price,
+                    filled: l.filled,
+                    is_buy: l.isBuy,
+                })
+                .collect();
+
+            grids.push(GridOnChain {
+                id,
+                owner: grid_data.owner,
+                base_token: grid_data.baseToken,
+                quote_token: grid_data.quoteToken,
+                lower_price: grid_data.lowerPrice,
+                upper_price: grid_data.upperPrice,
+                grid_count: grid_data.gridCount,
+                active: grid_data.active,
+                levels,
+            });
+        }
+
+        Ok(grids)
+    }
+
+    /// تنفيذ مستوى grid مع إعادة المحاولة
+    pub async fn execute_grid(
+        &self,
+        grid_id: u64,
+        level_index: usize,
+    ) -> Result<String> {
+        let mut last_err = anyhow!("لم تبدأ بعد");
+
+        for attempt in 1..=self.max_retries {
+            match self.try_execute_grid(grid_id, level_index).await {
+                Ok(hash) => return Ok(hash),
+                Err(e) => {
+                    warn!("⚠️ execute_grid محاولة {}/{}: {}", attempt, self.max_retries, e);
+                    last_err = e;
+                    if attempt < self.max_retries {
+                        tokio::time::sleep(Duration::from_secs(3 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+        Err(last_err)
+    }
+
+    async fn try_execute_grid(&self, grid_id: u64, level_index: usize) -> Result<String> {
+        let signer: PrivateKeySigner = self.private_key.parse()?;
+        let wallet = EthereumWallet::from(signer);
+
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(self.provider_url.parse()?);
+
+        let contract = GridTradingV2::new(self.contract_address, provider);
+
+        let tx_hash = contract
+            .executeGrid(U256::from(grid_id), U256::from(level_index))
+            .send()
+            .await?
+            .watch()
+            .await?;
+
+        let hash = tx_hash.to_string();
+        info!("✅ executeGrid tx: {}", hash);
+        Ok(hash)
+    }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "AGRO — Celo Grid Keeper V2",
+  "short_name": "AGRO",
+  "description": "All-Domain Grid Resolution Office: Fibonacci ATR adaptive grid trading on Celo. PURSUIT Protocol.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ecedee",
+  "theme_color": "#0f172a",
+  "lang": "en",
+  "categories": ["finance", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "AGRO Dashboard — Desktop"
+    },
+    {
+      "src": "/screenshot-narrow.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "AGRO Dashboard — Mobile"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Deploy Grid",
+      "short_name": "Deploy",
+      "description": "Open the grid deployment modal",
+      "url": "/?action=deploy",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+use celo_grid_keeper_v2::price_feed::{fetch_aggregated_price, fetch_ohlc, KlineParams};
+use celo_grid_keeper_v2::grid::compute_grid;
+use celo_grid_keeper_v2::chain::ChainClient;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().with_target(false).compact().init();
+
+    let client = reqwest::Client::builder()
+        .user_agent("test/1.0")
+        .timeout(Duration::from_secs(15))
+        .build()?;
+
+    // 1. اختبار السعر
+    println!("\n=== Test 1: Price Feed ===");
+    let price = fetch_aggregated_price(&client, "CELOUSDT").await?;
+    println!("✅ Price: {:.4} | Sources: {:?}", price.price, price.sources_used);
+
+    // 2. اختبار OHLC
+    println!("\n=== Test 2: OHLC (Fibonacci) ===");
+    let params = KlineParams {
+        symbol: "CELOUSDT".to_string(),
+        interval: "15m".to_string(),
+        limit: 50,
+    };
+    let ohlc = fetch_ohlc(&client, &params).await?;
+    println!("✅ High: {:.4} | Low: {:.4}", ohlc.high, ohlc.low);
+
+    // 3. اختبار Fibonacci Grid
+    println!("\n=== Test 3: Fibonacci Grid ===");
+    let grid = compute_grid(&ohlc, price.price);
+    println!("Circuit Breaker: {}", grid.circuit_breaker_triggered);
+    for level in &grid.levels {
+        println!("  Fib {:.3} → ${:.4} | {:?} | active={}", 
+            level.ratio, level.price, level.side, level.is_active);
+    }
+
+    // 4. اختبار Contract
+    println!("\n=== Test 4: On-chain Grids ===");
+    dotenvy::dotenv().ok();
+    let chain = ChainClient::new(
+        std::env::var("CONTRACT_ADDRESS")?,
+        std::env::var("KEEPER_ADDRESS")?,
+        std::env::var("RPC_URL")?,
+        std::env::var("PRIVATE_KEY")?,
+        3,
+    )?;
+    let grids = chain.get_active_grids().await?;
+    println!("✅ Active grids: {}", grids.len());
+    for g in &grids {
+        println!("  Grid #{} | levels={} | active={}", g.id, g.levels.len(), g.active);
+    }
+
+    println!("\n✅ All tests passed!");
+    Ok(())
+}
+

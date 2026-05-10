@@ -1,0 +1,6 @@
+{
+  "name": "Celo Grid Keeper Dashboard",
+  "description": "Production-grade monitoring for automated Fibonacci & ATR adaptive grid trading on Celo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
