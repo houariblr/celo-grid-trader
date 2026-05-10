@@ -1,32 +1,4 @@
-<div align="center">
 
-<!-- Replace with your actual banner image once uploaded to GitHub -->
-<img width="1200" height="400" alt="AGRO — Celo Grid Keeper V2 Banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-
-<br /><br />
-
-<h1>
-  <img src="https://img.shields.io/badge/CELO-Grid%20Keeper%20V2-16a34a?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIGZpbGw9IndoaXRlIi8+PC9zdmc+" />
-</h1>
-
-<p><strong>ALL-DOMAIN GRID RESOLUTION OFFICE — PURSUIT PROTOCOL</strong></p>
-
-<p>
-  Production-grade Fibonacci &amp; ATR-adaptive automated grid trading on Celo.<br/>
-  MiniPay compatible · PWA installable · Sepolia testnet ready.
-</p>
-
-<br/>
-
-[![Live Demo](https://img.shields.io/badge/LIVE%20DEMO-ai.studio-0891B2?style=for-the-badge)](https://ai.studio/apps/6fe3d85a-34ff-4d09-b74d-9ce65796ecf9)
-[![Network](https://img.shields.io/badge/Network-Celo%20Sepolia-FCFF52?style=for-the-badge)](https://alfajores.celoscan.io)
-[![MiniPay](https://img.shields.io/badge/MiniPay-Compatible-16a34a?style=for-the-badge)](https://docs.celo.org/build-on-celo/build-on-minipay/overview)
-[![License](https://img.shields.io/badge/License-Apache%202.0-6D28D9?style=for-the-badge)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-
-</div>
-
----
 
 ## What is this?
 
